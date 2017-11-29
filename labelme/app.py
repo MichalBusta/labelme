@@ -25,8 +25,13 @@ import re
 import sys
 import subprocess
 
+import locale
+import cv2
+
 from functools import partial
 from collections import defaultdict
+
+from icdarAnnotation import ICDARAnnotation
 
 try:
     from PyQt5.QtGui import *
@@ -123,6 +128,11 @@ class MainWindow(QMainWindow, WindowMixin):
         self.labelListContainer.setLayout(listLayout)
         listLayout.addWidget(self.editButton)#, 0, Qt.AlignCenter)
         listLayout.addWidget(self.labelList)
+        
+        #add images navigation 
+        self.imagesListWidget = QListWidget()
+        self.imagesListWidget.itemDoubleClicked.connect(self.imageNavigate)
+        listLayout.addWidget(self.imagesListWidget)
 
 
         self.dock = QDockWidget('Polygon Labels', self)
@@ -182,6 +192,8 @@ class MainWindow(QMainWindow, WindowMixin):
                 'Ctrl+N', 'new', 'Draw a new polygon', enabled=False)
         delete = action('Delete\nPolygon', self.deleteSelectedShape,
                 'Delete', 'delete', 'Delete', enabled=False)
+        deleteImage = action('Delete\nImage', self.delete_image,
+                'Ctrl+E', 'delete', u'Delete Image', enabled=True)
         copy = action('&Duplicate\nPolygon', self.copySelectedShape,
                 'Ctrl+D', 'copy', 'Create a duplicate of the selected polygon',
                 enabled=False)
@@ -251,6 +263,12 @@ class MainWindow(QMainWindow, WindowMixin):
         addActions(labelMenu, (edit, delete))
         self.labelList.setContextMenuPolicy(Qt.CustomContextMenu)
         self.labelList.customContextMenuRequested.connect(self.popLabelListMenu)
+        
+        imageMenu = QMenu()
+        addActions(imageMenu, (None, None, deleteImage, ))
+        
+        self.imagesListWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.imagesListWidget.customContextMenuRequested.connect(self.popImageListMenu)
 
         # Store actions for further handling.
         self.actions = struct(save=save, saveAs=saveAs, open=open, close=close,
@@ -276,7 +294,8 @@ class MainWindow(QMainWindow, WindowMixin):
                 view=self.menu('&View'),
                 help=self.menu('&Help'),
                 recentFiles=QMenu('Open &Recent'),
-                labelList=labelMenu)
+                labelList=labelMenu,
+                imageList=imageMenu)
 
         addActions(self.menus.file,
                 (open, self.menus.recentFiles, save, saveAs, close, None, quit))
@@ -489,6 +508,9 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def popLabelListMenu(self, point):
         self.menus.labelList.exec_(self.labelList.mapToGlobal(point))
+        
+    def popImageListMenu(self, point):
+        self.menus.imageList.exec_(self.imagesListWidget.mapToGlobal(point))
 
     def editLabel(self, item=None):
         if not self.canvas.editing():
@@ -498,6 +520,20 @@ class MainWindow(QMainWindow, WindowMixin):
         if text is not None:
             item.setText(text)
             self.setDirty()
+            
+    def delete_image(self):
+        if os.path.exists(self.imageFile):
+            os.remove(self.imageFile)
+        icdarGTTextFile = self.imageFile[0:-4] + '.gt'
+        if os.path.exists(icdarGTTextFile):
+            os.remove(icdarGTTextFile)
+        icdarGTTextFile = self.imageFile[0:-4] + '.txt'
+        if os.path.exists(icdarGTTextFile):
+            os.remove(icdarGTTextFile)
+        icdarGTTextFile = self.imageFile[0:-4] + '.lif'
+        if os.path.exists(icdarGTTextFile):
+            os.remove(icdarGTTextFile)
+        self.imagesListWidget.takeItem(self.imagesListWidget.currentRow())
 
     # React to canvas signals.
     def shapeSelectionChanged(self, selected=False):
@@ -560,6 +596,22 @@ class MainWindow(QMainWindow, WindowMixin):
                         points=[(p.x(), p.y()) for p in s.points])
 
         shapes = [format_shape(shape) for shape in self.canvas.shapes]
+        
+        of_txt = filename.replace(".json", '.txt')
+        of_txt = of_txt.replace(".jpg", '.txt')
+        of_txt = of_txt.replace(".png", '.txt')
+        of_dir = os.path.dirname(of_txt)
+        of_txt = '{0}/gt_{1}'.format(of_dir, os.path.basename(of_txt))
+        of_txt = open(of_txt, 'w')
+        for shape in shapes:
+          for point in shape['points']:
+            of_txt.write('{0},{1},'.format(point[0], point[1]))
+          of_txt.write('1, {0}\n'.format(shape['label']))
+        of_txt.close()
+        
+        return True    
+          
+        
         try:
             lf.save(filename, shapes, str(self.filename), self.imageData,
                 self.lineColor.getRgb(), self.fillColor.getRgb())
@@ -656,6 +708,13 @@ class MainWindow(QMainWindow, WindowMixin):
             filename = self.settings.get('filename', '')
         filename = str(filename)
         if QFile.exists(filename):
+            
+            if os.path.isdir(filename):
+              filename = self.loadDirectory(filename)
+              self.imageFile = filename
+            else:
+              self.imageFile = filename
+           
             if LabelFile.isLabelFile(filename):
                 try:
                     self.labelFile = LabelFile(filename)
@@ -682,6 +741,20 @@ class MainWindow(QMainWindow, WindowMixin):
                 # read data first and store for saving into label file.
                 self.imageData = read(filename, None)
                 self.labelFile = None
+                
+                icdarTextFile = filename[0:-4] + '.txt'
+                
+                of_dir = os.path.dirname(icdarTextFile)
+                of_txt = '{0}/gt_{1}'.format(of_dir, os.path.basename(icdarTextFile))
+                if os.path.exists(of_txt):
+                  icdarTextFile = of_txt
+                  
+                
+                if os.path.exists(icdarTextFile):
+                    an = ICDARAnnotation(icdarTextFile, True)
+                    if an.isValid:
+                        self.an = an
+                
             image = QImage.fromData(self.imageData)
             if image.isNull():
                 formats = ['*.{}'.format(fmt.data().decode())
@@ -699,6 +772,8 @@ class MainWindow(QMainWindow, WindowMixin):
             self.canvas.loadPixmap(QPixmap.fromImage(image))
             if self.labelFile:
                 self.loadLabels(self.labelFile.shapes)
+            elif self.an != None:
+                self.loadLabels(self.an.get_shapes())
             self.setClean()
             self.canvas.setEnabled(True)
             self.adjustScale(initial=True)
@@ -787,7 +862,8 @@ class MainWindow(QMainWindow, WindowMixin):
             elif self.output:
                 self._saveFile(self.output)
             else:
-                self._saveFile(self.saveFileDialog())
+                #self._saveFile(self.saveFileDialog())
+                self._saveFile(self.filename)
 
     def saveFileAs(self, _value=False):
         assert not self.image.isNull(), "cannot save empty image"
@@ -905,6 +981,53 @@ class MainWindow(QMainWindow, WindowMixin):
     def moveShape(self):
         self.canvas.endMove(copy=False)
         self.setDirty()
+        
+    def imageNavigate(self, item=None):
+        if not self.canvas.editing():
+            return
+        if item == None:
+            return
+        if not self.mayContinue():
+            return
+
+        filename = os.path.join(self.workDir, item.text())
+        self.loadFile(filename)
+        
+        
+    def loadDirectory(self, filename):
+        
+      self.imagesListWidget.setIconSize(QSize(50,50))
+      
+      self.imagesList = []
+      if os.path.isdir(filename):
+        self.workDir = filename
+        self.imagesList = []
+        for file in os.listdir(filename):
+          if file.endswith(".jpg"):
+            self.imagesList.append(os.path.join(filename, file))
+          if file.endswith(".png"):
+            self.imagesList.append(os.path.join(filename, file))
+
+        self.imagesList.sort(key=locale.strxfrm, reverse=True)
+
+        for file in self.imagesList:
+          item = QListWidgetItem(os.path.basename(file))
+
+          item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+
+          cvImg = cv2.imread(file)
+          mask = QImage(cvImg.data, cvImg.shape[1], cvImg.shape[0], cvImg.strides[0], QImage.Format_RGB888)
+          mask.ndarray = cvImg
+          #mask.setColorTable(COLORTABLE)
+          icon = QIcon(QPixmap.fromImage(mask))
+          item.setIcon(icon)
+          self.imagesListWidget.addItem(item)
+          
+                      
+      if len(self.imagesList) > 0:                    
+          filename = self.imagesList[0]
+          self.imageListPosition = 0
+      return filename
 
 
 class Settings(object):
@@ -962,3 +1085,6 @@ def main():
     win.show()
     win.raise_()
     sys.exit(app.exec_())
+    
+if __name__ == "__main__":
+  main()

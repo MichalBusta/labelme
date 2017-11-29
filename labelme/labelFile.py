@@ -66,7 +66,7 @@ class LabelFile(object):
         try:
             with open(filename, 'wb') as f:
                 if six.PY3:
-                    imageData = b64encode(imageData.encode('utf-8'))
+                    imageData = b64encode(imageData)
                 elif six.PY2:
                     imageData = b64encode(imageData)
                 else:

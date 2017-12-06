@@ -90,7 +90,7 @@ class ICDARAnnotation(object):
         Constructor
         '''
         self.fileName = fileName
-        
+        self.is3Pts = False
         file = open(fileName, "r")
         self.isValid = False
         delim = ','
@@ -104,8 +104,17 @@ class ICDARAnnotation(object):
                   continue
               
               splits = line.split(delim)
+              splits2 = line.split(" ")
               if len(splits) > 4:
                   annotation = splits
+              elif len(splits2) == 3:
+                x = int(float(splits2[0]))
+                y = int(float(splits2[1]))
+                width = int(float(splits2[2]))
+                
+                annotation  = [ x - width, y - width, x + width, y - width,  x + width, y + width, x - width, y + width, 0, "" ]
+                self.is3Pts = True
+                
               else:
                   delim = ','
                   splits = line.split(delim)

@@ -101,6 +101,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Whether we need to save or not.
         self.dirty = False
+        self.an = None
 
         self._noSelectionSlot = False
         self._beginner = True
@@ -601,13 +602,29 @@ class MainWindow(QMainWindow, WindowMixin):
         of_txt = of_txt.replace(".jpg", '.txt')
         of_txt = of_txt.replace(".png", '.txt')
         of_dir = os.path.dirname(of_txt)
-        of_txt = '{0}/gt_{1}'.format(of_dir, os.path.basename(of_txt))
-        of_txt = open(of_txt, 'w')
-        for shape in shapes:
-          for point in shape['points']:
-            of_txt.write('{0},{1},'.format(point[0], point[1]))
-          of_txt.write('1, {0}\n'.format(shape['label']))
-        of_txt.close()
+        if self.an is not None and  self.an.is3Pts:
+          of_txt = '{0}/{1}'.format(of_dir, os.path.basename(of_txt))
+          of_txt = open(of_txt, 'w')
+          for shape in shapes:
+            center = [0, 0]
+            for point in shape['points']: 
+              center[0] += point[0]
+              center[1] += point[1]
+              
+            radius = (shape[1][0] - shape[0][0]) / 2
+            of_txt.write('{0} {1} {2}\n'.format(center[0] / 4, center[1] / 4, radius))
+            
+          of_txt.close()
+          
+        else:
+          of_txt = '{0}/gt_{1}'.format(of_dir, os.path.basename(of_txt))
+          of_txt = open(of_txt, 'w')
+          for shape in shapes:
+            for point in shape['points']:
+              of_txt.write('{0},{1},'.format(point[0], point[1]))
+            of_txt.write('1, {0}\n'.format(shape['label']))
+          of_txt.close()
+          
         
         return True    
           
@@ -703,6 +720,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def loadFile(self, filename=None):
         """Load the specified file, or the last opened file if None."""
         self.resetState()
+        self.an = None
         self.canvas.setEnabled(False)
         if filename is None:
             filename = self.settings.get('filename', '')
